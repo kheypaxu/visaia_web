@@ -1,29 +1,121 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { HiBell, HiArrowLeft, HiOutlineCamera, HiOutlineBadgeCheck, HiOutlineBookOpen, HiOutlineZoomIn, HiOutlineZoomOut, HiArrowsExpand, HiOutlineShieldCheck } from 'react-icons/hi';
 import { HiArrowTopRightOnSquare } from 'react-icons/hi2';
+import { db } from '../../firebase';
+import { doc, getDoc, collection, addDoc, serverTimestamp } from "firebase/firestore";
 
 const ValidationReview = () => {
   const navigate = useNavigate();
-  const [diagnosis, setDiagnosis] = useState('match');
+  const { id } = useParams(); // Get ID from the URL
 
-  const handleConfirm = () => {
-    alert("Validation confirmed and submitted successfully!");
-    navigate('/validation');
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [diagnosis, setDiagnosis] = useState('match');
+  const [actionPriority, setActionPriority] = useState('Biological');
+  const [advisoryMessage, setAdvisoryMessage] = useState('Default advisory...');
+  const [internalNotes, setInternalNotes] = useState('');
+  const [viewMode, setViewMode] = useState('annotated'); // 'raw' or 'annotated'
+
+  useEffect(() => {
+    const fetchReport = async () => {
+      try {
+        const docRef = doc(db, "reports", id);
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+          const reportData = { id: docSnap.id, ...docSnap.data() };
+          setReport(reportData);
+
+          // FIX: If we have the base64, send it to the Flask server now
+          // Inside your useEffect where you prepare the file:
+          if (reportData.imageBase64) {
+            // 1. Remove the prefix if it exists
+            const base64Content = reportData.imageBase64.includes(',')
+              ? reportData.imageBase64.split(',')[1]
+              : reportData.imageBase64;
+
+            // 2. Decode safely
+            const byteString = atob(base64Content);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+
+            for (let i = 0; i < byteString.length; i++) {
+              ia[i] = byteString.charCodeAt(i);
+            }
+
+            // Use 'image/jpeg' as default; ensure this matches your upload format
+            const file = new File([ab], "image.jpg", { type: "image/jpeg" });
+            handleAnalyzeImage(file);
+          }
+        }
+      } catch (e) {
+        console.error("Error:", e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchReport();
+  }, [id]);
+
+  const handleAnalyzeImage = async (imageFile) => {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+
+    const response = await fetch('http://localhost:5000/predict', {
+      method: 'POST',
+      body: formData
+    });
+
+    const data = await response.json();
+
+    // This updates the report state to include the annotated_url
+    // received from the Flask API
+    setReport(prev => ({
+      ...prev,
+      annotated_url: data.image_url
+    }));
   };
+
+  const handleConfirm = async () => {
+    if (!report) return;
+
+    try {
+      await addDoc(collection(db, "validations"), {
+        reportId: report.id,
+        expertDiagnosis: diagnosis,
+        mitigationAction: actionPriority,
+        advisoryMessage: advisoryMessage,
+        internalNotes: internalNotes,
+        // Ensure these fields exist in your 'reports' document or are defaulted
+        lat: report.location?.lat || 14.5995,
+        lng: report.location?.lng || 120.9842,
+        validatedAt: serverTimestamp(),
+        validatedBy: 'Expert_User_ID'
+      });
+
+      alert("Validation submitted and map updated!");
+      navigate('/validation');
+    } catch (e) {
+      console.error("Firestore error:", e);
+    }
+  };
+
+  if (loading) return <div className="p-10 text-center">Loading report details...</div>;
+  if (!report) return <div className="p-10 text-center">Report not found.</div>;
 
   return (
     <div className="space-y-6 pb-12">
 
       {/* Navigation & Pagination Section */}
       <div className="mb-8">
-        <button 
-          onClick={() => navigate('/validation')} 
+        <button
+          onClick={() => navigate('/validation')}
           className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors mb-6"
         >
           <HiArrowLeft className="text-lg" /> Go back to Validation Queue
         </button>
-        
+
         <div className="flex justify-between items-center mb-3">
           <h3 className="text-[#10B981] font-bold text-sm tracking-wide uppercase">
             PENDING VALIDATION (1 OF 12)
@@ -36,7 +128,7 @@ const ValidationReview = () => {
             <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium text-sm transition-colors">{'>'}</button>
           </div>
         </div>
-        
+
         {/* Full-width Progress Bar */}
         <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
           <div className="bg-[#10B981] w-1/12 h-full rounded-full"></div>
@@ -71,17 +163,48 @@ const ValidationReview = () => {
 
       {/* Main Two-Column Layout */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* LEFT COLUMN: Photos & Form */}
         <div className="lg:col-span-2 space-y-6">
           {/* Photo Section */}
           <div>
             <div className="flex items-center gap-2 mb-3">
               <HiOutlineCamera className="text-[#10B981] text-lg" />
-              <h4 className="font-bold text-sm text-gray-900">ORIGINAL FARMER PHOTO</h4>
+              <h4 className="font-bold text-sm text-gray-900">FARMER PHOTO</h4>
             </div>
-            <div className="relative bg-gray-200 rounded-2xl overflow-hidden h-[320px] w-full">
-              <img src="https://placehold.co/800x600/e2e8f0/1e293b?text=Farmer+Submission+Photo" alt="Farmer submission" className="w-full h-full object-cover" />
+
+            {/* Toggle buttons for image view */}
+            <div className="flex gap-2 mb-3">
+              <button
+                onClick={() => setViewMode('raw')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'raw'
+                  ? 'bg-[#10B981] text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+              >
+                View Original
+              </button>
+              <button
+                onClick={() => setViewMode('annotated')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'annotated'
+                  ? 'bg-[#10B981] text-white'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                  }`}
+              >
+                View Annotated
+              </button>
+            </div>
+
+            <div className="relative bg-gray-200 rounded-2xl overflow-hidden h-[35rem] w-[50rem]">
+              <img
+                src={
+                  viewMode === 'raw'
+                    ? `data:image/jpeg;base64,${report.imageBase64}`
+                    : report.annotated_url
+                }
+                alt="Farmer submission"
+                className="w-full h-full object-cover"
+              />
               <div className="absolute bottom-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-full flex items-center gap-3 shadow-sm border border-white/20">
                 <button className="text-gray-600 hover:text-black"><HiOutlineZoomIn /></button>
                 <div className="w-px h-4 bg-gray-300"></div>
@@ -98,7 +221,7 @@ const ValidationReview = () => {
               <HiOutlineBadgeCheck className="text-[#10B981] text-xl" />
               <h4 className="font-bold text-sm text-gray-900">EXPERT VALIDATION</h4>
             </div>
-            
+
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 space-y-8">
               {/* Diagnosis Confirmation */}
               <div>
@@ -162,7 +285,7 @@ const ValidationReview = () => {
                       <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider">ADVISORY MESSAGE (SENT TO FARMER)</label>
                       <span className="text-[9px] text-gray-400">Expert may edit below</span>
                     </div>
-                    <textarea 
+                    <textarea
                       className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981] h-24 resize-none"
                       defaultValue="Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
                     ></textarea>
@@ -173,7 +296,7 @@ const ValidationReview = () => {
               {/* Internal Notes */}
               <div>
                 <label className="block text-[10px] font-bold text-gray-900 uppercase tracking-wider mb-2">INTERNAL VALIDATION NOTES</label>
-                <textarea 
+                <textarea
                   className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981] h-24 resize-none"
                   placeholder="Enter internal notes here..."
                 ></textarea>
@@ -184,7 +307,7 @@ const ValidationReview = () => {
 
         {/* RIGHT COLUMN: AI Results & Guides */}
         <div className="space-y-6">
-          
+
           {/* AI Result Header */}
           <div className="flex items-center gap-2 mb-3">
             <span className="text-[#10B981] text-lg font-bold">⬡</span>
@@ -192,28 +315,40 @@ const ValidationReview = () => {
           </div>
 
           {/* AI Result Card */}
-          <div className="bg-[#F8FDF9] rounded-2xl border border-green-100 shadow-sm p-6 relative overflow-hidden">
+          <div className="bg-[#F8FDF9] rounded-2xl border border-green-100 shadow-sm p-6">
             <p className="text-[10px] font-bold text-[#10B981] uppercase tracking-wider mb-1">DETECTED PEST</p>
-            <h3 className="text-2xl font-extrabold text-[#042F21] mb-6">Fall Armyworm</h3>
-            
+
+            {/* Corrected: Accessing 'detection' */}
+            <h3 className="text-2xl font-extrabold text-[#042F21] mb-6">{report.detection || 'N/A'}</h3>
+
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">GROWTH STAGE</p>
-                <p className="text-xl font-bold text-gray-900">Larvae</p>
+                {/* Corrected: Accessing 'crop' */}
+                <p className="text-xl font-bold text-gray-900">{report.lifeStage || 'N/A'}</p>
               </div>
               <div>
                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1">RISK LEVEL</p>
-                <p className="text-xl font-bold text-red-600">High</p>
+                {/* Corrected: Accessing 'risk' */}
+                <p className={`text-xl font-bold ${report.riskLevel === 'High' ? 'text-red-600' : 'text-green-600'}`}>
+                  {report.risk || 'N/A'}
+                </p>
               </div>
-            </div>
 
-            <div className="mb-6">
-              <div className="flex justify-between items-end mb-2">
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">CONFIDENCE SCORE</p>
-                <span className="text-lg font-bold text-[#042F21]">96%</span>
-              </div>
-              <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                <div className="bg-[#10B981] w-[96%] h-full rounded-full"></div>
+              <div className="mb-6">
+                <div className="flex justify-between items-end mb-2">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">CONFIDENCE SCORE</p>
+                  {/* Fetch confidence from Firestore */}
+                  <span className="text-lg font-bold text-[#042F21]">
+                    {report.confidence ? `${(report.confidence * 100).toFixed(0)}%` : '0%'}
+                  </span>
+                </div>
+                <div className="w-full h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="bg-[#10B981] h-full rounded-full"
+                    style={{ width: `${(report.confidence || 0) * 100}%` }}
+                  ></div>
+                </div>
               </div>
             </div>
 
@@ -235,7 +370,7 @@ const ValidationReview = () => {
           {/* Visual Guide Card */}
           <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
             <h5 className="font-bold text-sm text-gray-900 mb-4">Fall Armyworm Larvae Identification</h5>
-            
+
             <div className="relative bg-gray-100 rounded-xl overflow-hidden aspect-video mb-4">
               <img src="https://placehold.co/600x400/e2e8f0/1e293b?text=Pest+Reference+Photo" alt="Reference" className="w-full h-full object-cover" />
               <div className="absolute bottom-2 right-2 bg-white/90 backdrop-blur-sm px-2 py-1 rounded-full flex items-center gap-2 shadow-sm border border-white/20 text-xs">
@@ -277,13 +412,13 @@ const ValidationReview = () => {
 
       {/* Action Buttons Footer */}
       <div className="flex justify-end items-center gap-6 pt-6 mt-8 border-t border-gray-200">
-        <button 
+        <button
           onClick={() => navigate('/validation')}
           className="text-gray-500 font-bold text-sm hover:text-gray-800 transition-colors"
         >
           Cancel
         </button>
-        <button 
+        <button
           onClick={handleConfirm}
           className="bg-[#388E3C] hover:bg-green-700 text-white font-bold text-sm px-8 py-3.5 rounded-lg shadow-sm transition-colors"
         >
