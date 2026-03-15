@@ -1,22 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { db } from "../../firebase";
 import { HiBell, HiOutlineSearch, HiOutlineDownload } from 'react-icons/hi';
 import { HiOutlineDocumentText, HiCheckCircle } from 'react-icons/hi2';
 
 const Validation = () => {
   const navigate = useNavigate();
-  
+
   const [activeTab, setActiveTab] = useState('pending');
   const [selectedCrop, setSelectedCrop] = useState('All Crops');
   const [selectedRisk, setSelectedRisk] = useState('Risk Level');
+  const [reports, setReports] = useState([]);
 
-  // State for reports so deletion works properly
-  const [reports, setReports] = useState([
-    { id: 'R0001', date: 'Mar. 02, 2026', time: '08:45 AM', farmer: 'Juan Dela Cruz', location: 'Brgy. Baringuit, Cabatuan', crop: 'Corn (Glutinous)', detection: 'Fall Armyworm', risk: 'HIGH' },
-    { id: 'R0002', date: 'Mar. 02, 2026', time: '08:45 AM', farmer: 'Juan Dela Cruz', location: 'Brgy. Baringuit, Cabatuan', crop: 'Corn (Glutinous)', detection: 'Fall Armyworm', risk: 'HIGH' },
-    { id: 'R0003', date: 'Mar. 02, 2026', time: '08:45 AM', farmer: 'Juan Dela Cruz', location: 'Brgy. Baringuit, Cabatuan', crop: 'Corn (Glutinous)', detection: 'Fall Armyworm', risk: 'HIGH' },
-    { id: 'R0004', date: 'Mar. 02, 2026', time: '08:45 AM', farmer: 'Juan Dela Cruz', location: 'Brgy. Baringuit, Cabatuan', crop: 'Corn (Glutinous)', detection: 'Fall Armyworm', risk: 'HIGH' }
-  ]);
+  useEffect(() => {
+    // 1. Order by a field that exists, like 'timestamp'
+    const q = query(collection(db, 'reports'), orderBy('timestamp', 'desc'));
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const reportsData = snapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          id: doc.id,
+          ...data, // 1. Spread the data FIRST
+          // 2. Then override ONLY the fields that need processing
+          date: data.timestamp?.toDate().toLocaleDateString() || 'N/A',
+          time: data.timestamp?.toDate().toLocaleTimeString() || 'N/A',
+          farmer: data.farmer || 'Unknown Farmer',
+          // Access the nested property correctly here
+          location: data.location?.areaName || 'Unknown Location',
+          crop: data.crop || 'Unknown Crop',
+          detection: data.detection || 'N/A',
+          risk: data.risk || 'N/A',
+        };
+      });
+      setReports(reportsData);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const cropOptions = ['All Crops', 'Corn (Glutinous)', 'Corn (Yellow)', 'Rice', 'Tomato', 'Onion'];
   const riskOptions = ['Risk Level', 'Low', 'Low-Moderate', 'Moderate', 'Moderate-High', 'High'];
@@ -35,7 +56,6 @@ const Validation = () => {
 
   const handleExport = () => {
     const headers = ['Report ID', 'Date', 'Time', 'Farmer Name', 'Location', 'Crop Type', 'AI Detection', 'Risk Level'];
-    
     const csvRows = reports.map(row => [
       row.id,
       `"${row.date}"`,
@@ -46,17 +66,13 @@ const Validation = () => {
       `"${row.detection}"`,
       row.risk
     ].join(','));
-
     const csvContent = [headers.join(','), ...csvRows].join('\n');
-
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    
     const today = new Date().toISOString().split('T')[0];
     link.setAttribute('download', `VISAIA_${activeTab}_reports_${today}.csv`);
-    
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -64,7 +80,6 @@ const Validation = () => {
 
   return (
     <div className="space-y-6">
-
       {/* Page Title & Summary Cards */}
       <div className="flex justify-between items-end mb-8">
         <div>
@@ -95,24 +110,20 @@ const Validation = () => {
 
       {/* Main Content Area */}
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        
-        {/* Tabs */}
         <div className="flex border-b border-gray-100 px-6 pt-2">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-[#042F21] text-[#042F21]'
-                  : 'border-transparent text-gray-400 hover:text-gray-600'
-              }`}
+              className={`px-6 py-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${activeTab === tab.id
+                ? 'border-[#042F21] text-[#042F21]'
+                : 'border-transparent text-gray-400 hover:text-gray-600'
+                }`}
             >
               {tab.label}
               {tab.count && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] ${
-                  activeTab === tab.id ? 'bg-[#042F21] text-white' : 'bg-green-100 text-green-700'
-                }`}>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === tab.id ? 'bg-[#042F21] text-white' : 'bg-green-100 text-green-700'
+                  }`}>
                   {tab.count}
                 </span>
               )}
@@ -131,7 +142,7 @@ const Validation = () => {
             />
           </div>
           <div className="flex items-center gap-3">
-            <select 
+            <select
               value={selectedCrop}
               onChange={(e) => setSelectedCrop(e.target.value)}
               className="border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 cursor-pointer"
@@ -140,8 +151,7 @@ const Validation = () => {
                 <option key={index} value={crop}>{crop}</option>
               ))}
             </select>
-
-            <select 
+            <select
               value={selectedRisk}
               onChange={(e) => setSelectedRisk(e.target.value)}
               className="border border-gray-200 rounded-lg px-4 py-2 text-sm font-medium text-gray-700 bg-white focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500 cursor-pointer"
@@ -150,8 +160,7 @@ const Validation = () => {
                 <option key={index} value={risk}>{risk}</option>
               ))}
             </select>
-
-            <button 
+            <button
               onClick={handleExport}
               className="flex items-center gap-2 bg-[#6B7280] hover:bg-gray-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors"
             >
@@ -204,14 +213,14 @@ const Validation = () => {
                     </td>
                     <td className="px-6 py-4">
                       {activeTab === 'rejected' ? (
-                        <button 
+                        <button
                           onClick={() => handleDelete(row.id)}
                           className="bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-2 px-6 rounded-lg transition-colors"
                         >
                           Delete
                         </button>
                       ) : (
-                        <button 
+                        <button
                           onClick={() => navigate(`/validation/${row.id}`)}
                           className="bg-[#0FBD2C] hover:bg-green-600 text-white text-sm font-bold py-2 px-6 rounded-lg transition-colors"
                         >
@@ -235,15 +244,8 @@ const Validation = () => {
         {/* Footer / Pagination */}
         <div className="p-6 border-t border-gray-100 flex justify-between items-center">
           <p className="text-sm font-medium text-gray-500">
-            Showing {reports.length} of 32 {activeTab} reports
+            Showing {reports.length} reports
           </p>
-          <div className="flex gap-2">
-            <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-400 hover:bg-gray-50 font-medium text-sm transition-colors">{'<'}</button>
-            <button className="w-8 h-8 flex items-center justify-center rounded bg-[#10B981] text-white font-bold text-sm transition-colors">1</button>
-            <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium text-sm transition-colors">2</button>
-            <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium text-sm transition-colors">3</button>
-            <button className="w-8 h-8 flex items-center justify-center rounded border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium text-sm transition-colors">{'>'}</button>
-          </div>
         </div>
       </div>
     </div>
