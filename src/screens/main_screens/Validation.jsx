@@ -26,7 +26,7 @@ const Validation = () => {
           // 2. Then override ONLY the fields that need processing
           date: data.timestamp?.toDate().toLocaleDateString() || 'N/A',
           time: data.timestamp?.toDate().toLocaleTimeString() || 'N/A',
-          farmer: data.farmer || 'Unknown Farmer',
+          farmer: data.farmerName || 'Unknown Farmer',
           // Access the nested property correctly here
           location: data.location?.areaName || 'Unknown Location',
           crop: data.crop || 'Unknown Crop',
@@ -57,6 +57,7 @@ const Validation = () => {
   const handleExport = () => {
     const headers = ['Report ID', 'Date', 'Time', 'Farmer Name', 'Location', 'Crop Type', 'AI Detection', 'Risk Level'];
     const csvRows = reports.map(row => [
+      
       row.id,
       `"${row.date}"`,
       `"${row.time}"`,

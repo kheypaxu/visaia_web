@@ -12,6 +12,7 @@ const ValidationReview = () => {
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
   const [diagnosis, setDiagnosis] = useState('match');
+  const [correctedStage, setCorrectedStage] = useState(''); // New state for corrected life stage
   const [actionPriority, setActionPriority] = useState('Biological');
   const [advisoryMessage, setAdvisoryMessage] = useState('Default advisory...');
   const [internalNotes, setInternalNotes] = useState('');
@@ -80,8 +81,14 @@ const ValidationReview = () => {
   const handleConfirm = async () => {
     if (!report) return;
 
+    // Validation: If wrong_stage is selected, ensure correctedStage is selected
+    if (diagnosis === 'wrong_stage' && !correctedStage) {
+      alert("Please select a life stage when confirming wrong life stage detection.");
+      return;
+    }
+
     try {
-      await addDoc(collection(db, "validations"), {
+      const validationData = {
         reportId: report.id,
         expertDiagnosis: diagnosis,
         mitigationAction: actionPriority,
@@ -92,7 +99,14 @@ const ValidationReview = () => {
         lng: report.location?.lng || 120.9842,
         validatedAt: serverTimestamp(),
         validatedBy: 'Expert_User_ID'
-      });
+      };
+
+      // Only include correctedStage if wrong_stage is selected
+      if (diagnosis === 'wrong_stage') {
+        validationData.correctedStage = correctedStage;
+      }
+
+      await addDoc(collection(db, "validations"), validationData);
 
       alert("Validation submitted and map updated!");
       navigate('/validation');
@@ -228,35 +242,91 @@ const ValidationReview = () => {
                 <h5 className="font-bold text-sm text-gray-900 mb-4">Diagnosis Confirmation</h5>
                 <div className="space-y-3">
                   <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${diagnosis === 'match' ? 'border-[#10B981] bg-green-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <input type="radio" name="diagnosis" value="match" checked={diagnosis === 'match'} onChange={(e) => setDiagnosis(e.target.value)} className="hidden" />
+                    <input type="radio" name="diagnosis" value="match" checked={diagnosis === 'match'} onChange={(e) => {
+                      setDiagnosis(e.target.value);
+                      // Reset corrected stage when changing diagnosis
+                      if (e.target.value !== 'wrong_stage') {
+                        setCorrectedStage('');
+                      }
+                    }} className="hidden" />
                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${diagnosis === 'match' ? 'border-[#10B981]' : 'border-gray-300'}`}>
                       {diagnosis === 'match' && <div className="w-2 h-2 bg-[#10B981] rounded-full"></div>}
                     </div>
                     <span className="text-sm font-medium text-gray-800">Confirmed - matches AI detection</span>
                   </label>
                   <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${diagnosis === 'wrong_stage' ? 'border-[#10B981] bg-green-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <input type="radio" name="diagnosis" value="wrong_stage" checked={diagnosis === 'wrong_stage'} onChange={(e) => setDiagnosis(e.target.value)} className="hidden" />
+                    <input type="radio" name="diagnosis" value="wrong_stage" checked={diagnosis === 'wrong_stage'} onChange={(e) => {
+                      setDiagnosis(e.target.value);
+                      // Reset corrected stage when changing diagnosis
+                      if (e.target.value !== 'wrong_stage') {
+                        setCorrectedStage('');
+                      }
+                    }} className="hidden" />
                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${diagnosis === 'wrong_stage' ? 'border-[#10B981]' : 'border-gray-300'}`}>
                       {diagnosis === 'wrong_stage' && <div className="w-2 h-2 bg-[#10B981] rounded-full"></div>}
                     </div>
                     <span className="text-sm font-medium text-gray-800">Confirmed - wrong life stage detected</span>
                   </label>
+                  
+                  {/* Conditional Life Stage Selection */}
+                  <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                    diagnosis === 'wrong_stage' ? 'max-h-60 opacity-100 mt-3' : 'max-h-0 opacity-0'
+                  }`}>
+                    <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <p className="text-xs font-bold text-gray-700 mb-3">SELECT CORRECT LIFE STAGE:</p>
+                      <div className="grid grid-cols-4 gap-3">
+                        {['Egg', 'Larva', 'Pupa', 'Moth'].map((stage) => (
+                          <button
+                            key={stage}
+                            type="button"
+                            onClick={() => setCorrectedStage(stage)}
+                            className={`py-2 px-3 rounded-lg text-sm font-medium transition-colors ${
+                              correctedStage === stage
+                                ? 'bg-[#10B981] text-white shadow-sm'
+                                : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                            }`}
+                          >
+                            {stage}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
                   <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${diagnosis === 'other' ? 'border-[#10B981] bg-green-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <input type="radio" name="diagnosis" value="other" checked={diagnosis === 'other'} onChange={(e) => setDiagnosis(e.target.value)} className="hidden" />
+                    <input type="radio" name="diagnosis" value="other" checked={diagnosis === 'other'} onChange={(e) => {
+                      setDiagnosis(e.target.value);
+                      // Reset corrected stage when changing diagnosis
+                      if (e.target.value !== 'wrong_stage') {
+                        setCorrectedStage('');
+                      }
+                    }} className="hidden" />
                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${diagnosis === 'other' ? 'border-[#10B981]' : 'border-gray-300'}`}>
                       {diagnosis === 'other' && <div className="w-2 h-2 bg-[#10B981] rounded-full"></div>}
                     </div>
                     <span className="text-sm font-medium text-gray-800">Other Pest (manual entry required)</span>
                   </label>
                   <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${diagnosis === 'beneficial' ? 'border-[#10B981] bg-green-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <input type="radio" name="diagnosis" value="beneficial" checked={diagnosis === 'beneficial'} onChange={(e) => setDiagnosis(e.target.value)} className="hidden" />
+                    <input type="radio" name="diagnosis" value="beneficial" checked={diagnosis === 'beneficial'} onChange={(e) => {
+                      setDiagnosis(e.target.value);
+                      // Reset corrected stage when changing diagnosis
+                      if (e.target.value !== 'wrong_stage') {
+                        setCorrectedStage('');
+                      }
+                    }} className="hidden" />
                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${diagnosis === 'beneficial' ? 'border-[#10B981]' : 'border-gray-300'}`}>
                       {diagnosis === 'beneficial' && <div className="w-2 h-2 bg-[#10B981] rounded-full"></div>}
                     </div>
                     <span className="text-sm font-medium text-gray-800">Beneficial Insect</span>
                   </label>
                   <label className={`flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${diagnosis === 'unclear' ? 'border-red-500 bg-red-50/30' : 'border-gray-200 hover:bg-gray-50'}`}>
-                    <input type="radio" name="diagnosis" value="unclear" checked={diagnosis === 'unclear'} onChange={(e) => setDiagnosis(e.target.value)} className="hidden" />
+                    <input type="radio" name="diagnosis" value="unclear" checked={diagnosis === 'unclear'} onChange={(e) => {
+                      setDiagnosis(e.target.value);
+                      // Reset corrected stage when changing diagnosis
+                      if (e.target.value !== 'wrong_stage') {
+                        setCorrectedStage('');
+                      }
+                    }} className="hidden" />
                     <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${diagnosis === 'unclear' ? 'border-red-500' : 'border-gray-300'}`}>
                       {diagnosis === 'unclear' && <div className="w-2 h-2 bg-red-500 rounded-full"></div>}
                     </div>
@@ -274,10 +344,14 @@ const ValidationReview = () => {
                 <div className="grid grid-cols-3 gap-4">
                   <div className="col-span-1">
                     <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">ACTION PRIORITY</label>
-                    <select className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-medium text-gray-800 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981]">
-                      <option>Biological</option>
-                      <option>Chemical</option>
-                      <option>Cultural</option>
+                    <select 
+                      className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm font-medium text-gray-800 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981]"
+                      value={actionPriority}
+                      onChange={(e) => setActionPriority(e.target.value)}
+                    >
+                      <option value="Biological">Biological</option>
+                      <option value="Chemical">Chemical</option>
+                      <option value="Cultural">Cultural</option>
                     </select>
                   </div>
                   <div className="col-span-2 relative">
@@ -287,7 +361,8 @@ const ValidationReview = () => {
                     </div>
                     <textarea
                       className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981] h-24 resize-none"
-                      defaultValue="Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
+                      value={advisoryMessage}
+                      onChange={(e) => setAdvisoryMessage(e.target.value)}
                     ></textarea>
                   </div>
                 </div>
@@ -299,6 +374,8 @@ const ValidationReview = () => {
                 <textarea
                   className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm text-gray-600 bg-white focus:outline-none focus:border-[#10B981] focus:ring-1 focus:ring-[#10B981] h-24 resize-none"
                   placeholder="Enter internal notes here..."
+                  value={internalNotes}
+                  onChange={(e) => setInternalNotes(e.target.value)}
                 ></textarea>
               </div>
             </div>
