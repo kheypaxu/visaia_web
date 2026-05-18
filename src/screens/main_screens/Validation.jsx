@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, getDoc, doc } from 'firebase/firestore';
 import { db } from "../../firebase";
-import { HiBell, HiOutlineSearch, HiOutlineDownload } from 'react-icons/hi';
+import { HiOutlineSearch, HiOutlineDownload } from 'react-icons/hi';
 import { HiOutlineDocumentText, HiCheckCircle } from 'react-icons/hi2';
 
 const Validation = () => {
@@ -12,52 +12,113 @@ const Validation = () => {
   const [selectedCrop, setSelectedCrop] = useState('All Crops');
   const [selectedRisk, setSelectedRisk] = useState('Risk Level');
   const [reports, setReports] = useState([]);
+  const [filteredReports, setFilteredReports] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [farmerNames, setFarmerNames] = useState({});
+
+  // Fetch farmer name by ID from 'farmers' collection
+  const fetchFarmerName = useCallback(async (farmerId) => {
+    if (!farmerId) return 'Unknown Farmer';
+    if (farmerNames[farmerId]) return farmerNames[farmerId];
+    
+    try {
+      const farmerDoc = await getDoc(doc(db, 'farmers', farmerId));
+      if (farmerDoc.exists()) {
+        const name = farmerDoc.data().fullName || 'Unknown Farmer';
+        setFarmerNames(prev => ({ ...prev, [farmerId]: name }));
+        return name;
+      }
+    } catch (err) {
+      console.error("Error fetching farmer:", err);
+    }
+    return 'Unknown Farmer';
+  }, [farmerNames]);
 
   useEffect(() => {
-    // 1. Order by a field that exists, like 'timestamp'
     const q = query(collection(db, 'reports'), orderBy('timestamp', 'desc'));
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const reportsData = snapshot.docs.map(doc => {
-        const data = doc.data();
+    const unsubscribe = onSnapshot(q, async (snapshot) => {
+      const reportsData = await Promise.all(snapshot.docs.map(async (docSnap) => {
+        const data = docSnap.data();
+        let farmerName = data.farmerName;
+        
+        // If farmerName is missing or unknown, try to fetch from farmers collection
+        if ((!farmerName || farmerName === 'Unknown Farmer') && data.farmerId) {
+          farmerName = await fetchFarmerName(data.farmerId);
+        }
+        
         return {
-          id: doc.id,
-          ...data, // 1. Spread the data FIRST
-          // 2. Then override ONLY the fields that need processing
+          id: docSnap.id,
+          ...data,
           date: data.timestamp?.toDate().toLocaleDateString() || 'N/A',
           time: data.timestamp?.toDate().toLocaleTimeString() || 'N/A',
-          farmer: data.farmerName || 'Unknown Farmer',
-          // Access the nested property correctly here
+          farmer: farmerName,
           location: data.location?.areaName || 'Unknown Location',
-          crop: data.crop || 'Unknown Crop',
+          crop: data.cropAffected || 'Unknown Crop',
           detection: data.detection || 'N/A',
           risk: data.risk || 'N/A',
+          status: data.status || 'pending', // default to pending
         };
-      });
+      }));
       setReports(reportsData);
     });
     return () => unsubscribe();
-  }, []);
+  }, [fetchFarmerName]);
 
-  const cropOptions = ['All Crops', 'Corn (Glutinous)', 'Corn (Yellow)', 'Rice', 'Tomato', 'Onion'];
-  const riskOptions = ['Risk Level', 'Low', 'Low-Moderate', 'Moderate', 'Moderate-High', 'High'];
+  // Filter reports based on activeTab, search, crop, risk
+  useEffect(() => {
+    let filtered = reports.filter(report => {
+      // Tab filter (status)
+      if (activeTab === 'pending' && report.status !== 'pending') return false;
+      if (activeTab === 'validated' && report.status !== 'validated') return false;
+      if (activeTab === 'rejected' && report.status !== 'rejected') return false;
+      
+      // Search filter
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        return (
+          report.id.toLowerCase().includes(term) ||
+          report.farmer.toLowerCase().includes(term) ||
+          report.location.toLowerCase().includes(term)
+        );
+      }
+      return true;
+    });
+    
+    // Crop filter
+    if (selectedCrop !== 'All Crops') {
+      filtered = filtered.filter(report => report.crop === selectedCrop);
+    }
+    
+    // Risk filter
+    if (selectedRisk !== 'Risk Level') {
+      filtered = filtered.filter(report => report.risk === selectedRisk);
+    }
+    
+    setFilteredReports(filtered);
+  }, [reports, activeTab, searchTerm, selectedCrop, selectedRisk]);
+
+  // Compute dynamic counts
+  const pendingCount = reports.filter(r => r.status === 'pending').length;
+  const validatedCount = reports.filter(r => r.status === 'validated').length;
+  const rejectedCount = reports.filter(r => r.status === 'rejected').length;
 
   const tabs = [
-    { id: 'pending', label: 'Pending Validation', count: 42 },
-    { id: 'validated', label: 'Validated' },
-    { id: 'rejected', label: 'Rejected' }
+    { id: 'pending', label: 'Pending Validation', count: pendingCount },
+    { id: 'validated', label: 'Validated', count: validatedCount },
+    { id: 'rejected', label: 'Rejected', count: rejectedCount }
   ];
 
   const handleDelete = (id) => {
     if (window.confirm(`Are you sure you want to delete report ${id}?`)) {
+      // Note: This only removes from local state, not Firestore.
+      // To actually delete, you need to call deleteDoc from firestore.
       setReports(reports.filter(report => report.id !== id));
     }
   };
 
   const handleExport = () => {
-    const headers = ['Report ID', 'Date', 'Time', 'Farmer Name', 'Location', 'Crop Type', 'AI Detection', 'Risk Level'];
-    const csvRows = reports.map(row => [
-      
+    const headers = ['Report ID', 'Date', 'Time', 'Farmer Name', 'Location', 'Crop Type', 'AI Detection', 'Risk Level', 'Status'];
+    const csvRows = filteredReports.map(row => [
       row.id,
       `"${row.date}"`,
       `"${row.time}"`,
@@ -65,7 +126,8 @@ const Validation = () => {
       `"${row.location}"`,
       `"${row.crop}"`,
       `"${row.detection}"`,
-      row.risk
+      row.risk,
+      row.status,
     ].join(','));
     const csvContent = [headers.join(','), ...csvRows].join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -78,6 +140,9 @@ const Validation = () => {
     link.click();
     document.body.removeChild(link);
   };
+
+  const cropOptions = ['All Crops', 'Corn (Glutinous)', 'Corn (Yellow)', 'Rice', 'Tomato', 'Onion'];
+  const riskOptions = ['Risk Level', 'Low', 'Low-Moderate', 'Moderate', 'Moderate-High', 'High'];
 
   return (
     <div className="space-y-6">
@@ -94,7 +159,7 @@ const Validation = () => {
             </div>
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">PENDING</p>
-              <h3 className="text-xl font-extrabold text-gray-900 leading-none">14</h3>
+              <h3 className="text-xl font-extrabold text-gray-900 leading-none">{pendingCount}</h3>
             </div>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-4 shadow-sm">
@@ -103,7 +168,7 @@ const Validation = () => {
             </div>
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">VALIDATED</p>
-              <h3 className="text-xl font-extrabold text-gray-900 leading-none">328</h3>
+              <h3 className="text-xl font-extrabold text-gray-900 leading-none">{validatedCount}</h3>
             </div>
           </div>
         </div>
@@ -116,15 +181,17 @@ const Validation = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${activeTab === tab.id
-                ? 'border-[#042F21] text-[#042F21]'
-                : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}
+              className={`px-6 py-4 font-bold text-sm flex items-center gap-2 border-b-2 transition-colors ${
+                activeTab === tab.id
+                  ? 'border-[#042F21] text-[#042F21]'
+                  : 'border-transparent text-gray-400 hover:text-gray-600'
+              }`}
             >
               {tab.label}
-              {tab.count && (
-                <span className={`px-2 py-0.5 rounded-full text-[10px] ${activeTab === tab.id ? 'bg-[#042F21] text-white' : 'bg-green-100 text-green-700'
-                  }`}>
+              {tab.count > 0 && (
+                <span className={`px-2 py-0.5 rounded-full text-[10px] ${
+                  activeTab === tab.id ? 'bg-[#042F21] text-white' : 'bg-green-100 text-green-700'
+                }`}>
                   {tab.count}
                 </span>
               )}
@@ -133,12 +200,14 @@ const Validation = () => {
         </div>
 
         {/* Toolbar */}
-        <div className="p-6 flex justify-between items-center gap-4 border-b border-gray-100">
+        <div className="p-6 flex justify-between items-center gap-4 border-b border-gray-100 flex-wrap">
           <div className="relative flex-1 max-w-lg">
             <HiOutlineSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-lg" />
             <input
               type="text"
               placeholder="Search by Farmer, Barangay, or ID..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
             />
           </div>
@@ -187,10 +256,10 @@ const Validation = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {reports.length > 0 ? (
-                reports.map((row) => (
+              {filteredReports.length > 0 ? (
+                filteredReports.map((row) => (
                   <tr key={row.id} className="hover:bg-gray-50/50 transition-colors">
-                    <td className="px-6 py-4 text-sm font-bold text-gray-500">{row.id}</td>
+                    <td className="px-6 py-4 text-sm font-bold text-gray-500">{row.id.slice(0, 8)}...</td>
                     <td className="px-6 py-4">
                       <p className="text-sm font-bold text-gray-900">{row.date}</p>
                       <p className="text-xs text-gray-400 mt-0.5">{row.time}</p>
@@ -200,7 +269,12 @@ const Validation = () => {
                     <td className="px-6 py-4 text-sm text-gray-500">{row.crop}</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <img src="src/assets/detection-thumb.png" alt="Crop" className="w-10 h-10 rounded-lg object-cover bg-gray-200" />
+                        <img 
+                          src={row.imageBase64 ? `data:image/jpeg;base64,${row.imageBase64.substring(0, 100)}` : "src/assets/detection-thumb.png"} 
+                          alt="Crop" 
+                          className="w-10 h-10 rounded-lg object-cover bg-gray-200"
+                          onError={(e) => e.target.src = "src/assets/detection-thumb.png"}
+                        />
                         <span className="bg-[#8BB76A] text-white text-xs font-bold px-3 py-1.5 rounded-md">
                           {row.detection}
                         </span>
@@ -208,8 +282,12 @@ const Validation = () => {
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                        <span className="text-xs font-bold text-red-600 uppercase tracking-wide">{row.risk}</span>
+                        <span className={`w-2 h-2 rounded-full ${
+                          row.risk === 'High' ? 'bg-red-500' : row.risk === 'Medium' ? 'bg-yellow-500' : 'bg-green-500'
+                        }`}></span>
+                        <span className="text-xs font-bold uppercase tracking-wide" style={{ color: row.risk === 'High' ? '#dc2626' : row.risk === 'Medium' ? '#eab308' : '#10b981' }}>
+                          {row.risk}
+                        </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
@@ -242,10 +320,10 @@ const Validation = () => {
           </table>
         </div>
 
-        {/* Footer / Pagination */}
+        {/* Footer */}
         <div className="p-6 border-t border-gray-100 flex justify-between items-center">
           <p className="text-sm font-medium text-gray-500">
-            Showing {reports.length} reports
+            Showing {filteredReports.length} of {reports.length} reports
           </p>
         </div>
       </div>
